@@ -1547,60 +1547,14 @@ TEXT."
 
 ;;;*;;; Evaluate only
 
-(defun ess-eval-region--normalise-region ()
-  "Clean the region for evaluation.
-This trims newlines at beginning and end of the region because
-they might throw off the debugger."
-  (save-excursion
-    (goto-char start)
-    (skip-chars-forward "\n\t ")
-    (setq start (point))
-
-    (unless mark-active
-      (ess-blink-region start end))
-
-    (goto-char end)
-    (skip-chars-backward "\n\t ")
-    (setq end (point))))
-
-(defun ess-eval-region (start end toggle &optional message type)
-  "Send the region from START to END to the inferior ESS process.
-TOGGLE switches the meaning of `ess-eval-visibly'. If given,
-MESSAGE is `message'ed. TYPE is a symbol indicating what type of
-region this is. If command `rectangle-mark-mode' is active, send
-the lines of the rectangle separately to the inferior process."
-  (interactive "r\nP")
-  (ess-force-buffer-current "Process to use: ")
-  (message "Starting evaluation...")
-  (unless ess-local-customize-alist
-    ;; External applications might call ess-eval-* functions; make it
-    ;; easier for them
-    (ess-setq-vars-local (symbol-value (ess-get-process-variable 'ess-local-customize-alist))))
-  (if (and (bound-and-true-p rectangle-mark-mode)
-           ;; TODO: Remove this check after dropping support for Emacs
-           ;; 24, replace by putting this at the top of this file:
-           ;; (declare-function extract-rectangle-bounds "rect")
-           (fboundp 'extract-rectangle-bounds))
-      ;; If we're in rectangle-mark-mode, loop over each line of the
-      ;; rectangle. Send them separately.
-      (let ((reclines (extract-rectangle-bounds (min (mark) (point)) (max (mark) (point)))))
-        (mapc (lambda (l)
-                (ess--eval-region (car l) (cdr l) toggle message type))
-              reclines))
-    (ess--eval-region start end toggle message type)))
-
-(defun ess--eval-region (start end toggle &optional message type)
-  "Helper function for `ess-eval-region', which see.
-START, END, TOGGLE, MESSAGE, and TYPE described there."
-  (ess-eval-region--normalise-region)
-  (let ((visibly (if toggle (not ess-eval-visibly) ess-eval-visibly))
-        (message (or message "Eval region"))
-        (proc (ess-get-process)))
-    (save-excursion
-      (ess-send-region proc start end visibly message type)))
-  (when ess-eval-deactivate-mark
-    (ess-deactivate-mark))
-  (list start end))
+(defun ess-eval-region (start end &optional visibly message)
+  "Send region from START to END to inferior ESS process.
+With prefix argument, do so VISIBLY.
+Optionally, also print MESSAGE."
+  (interactive "rP")
+  (message (or message "Eval region"))
+  (ess-force-buffer-current "Process to load into: ")
+  (ess-eval-linewise (buffer-substring start end) visibly))
 
 (defun ess-eval-buffer (vis)
   "Send the current buffer to the inferior ESS process.
@@ -1733,17 +1687,6 @@ active. Prefix arg VIS toggles visibility of ess-code as for
         (goto-char end))
     (ess-eval-function-or-paragraph-and-step vis)))
 
-(defun ess-eval-line (&optional vis)
-  "Send the current line to the inferior ESS process.
-VIS has same meaning as for `ess-eval-region'."
-  (interactive "P")
-  (save-excursion
-    (end-of-line)
-    (let ((end (point)))
-      (beginning-of-line)
-      (princ (concat "Loading line: " (ess-extract-word-name) " ...") t)
-      (ess-eval-region (point) end vis "Eval line"))))
-
 (defun ess-next-code-line (&optional arg skip-to-eob)
   "Move ARG lines of code forward (backward if ARG is negative).
 Skips past all empty and comment lines. Default for ARG is 1.
@@ -1776,26 +1719,17 @@ far as possible and return -1."
     (goto-char pos)
     n))
 
-(defun ess-eval-line-and-step (&optional simple-next even-empty invisibly)
-  "Evaluate the current line visibly and step to the \"next\" line.
-If SIMPLE-NEXT is non-nil, possibly via prefix arg, first skip
-empty and commented lines. If 2nd arg EVEN-EMPTY [prefix as
-well], also send empty lines.  When the variable `ess-eval-empty'
-is non-nil both SIMPLE-NEXT and EVEN-EMPTY are interpreted as
-true."
+(defun ess-eval-line (&optional visibly)
+  "Evaluate the current line, with prefix VISIBLY."
+  (interactive "P")
+  (ess-eval-region (line-beginning-position) (line-end-position) visibly))
+
+(defun ess-eval-line-and-step (&optional visibly)
+  "Evaluate the current line VISIBLY and step to the \"next\" line."
   ;; From an idea by Rod Ball (rod@marcam.dsir.govt.nz)
-  (interactive "P\nP"); prefix sets BOTH !
-  (ess-force-buffer-current "Process to load into: ")
-  (save-excursion
-    (end-of-line)
-    (let ((end (point)))
-      (beginning-of-line)
-      ;; go to end of process buffer so user can see result
-      (ess-eval-linewise (buffer-substring (point) end)
-                         invisibly 'eob (or even-empty ess-eval-empty))))
-  (if (or simple-next ess-eval-empty even-empty)
-      (forward-line 1)
-    (ess-next-code-line 1)))
+  (interactive "P")
+  (ess-eval-line visibly)
+  (ess-next-code-line 1))
 
 (defun ess-eval-region-or-line-and-step (&optional vis)
   "Evaluate region if there is an active one, otherwise the current line.
